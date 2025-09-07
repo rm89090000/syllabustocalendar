@@ -1,2 +1,2 @@
-declare module "ics";
 declare module "pdf-parse";
+declare module "ics";

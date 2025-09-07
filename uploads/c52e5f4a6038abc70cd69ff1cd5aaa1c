@@ -1,0 +1,120 @@
+export type TaskType = "assignment" | "exam" | "reading" | "quiz" | "homework" | "other";
+
+export interface CalendarTask {
+  id: string;
+  title: string;
+  type: TaskType;
+  date: string; // YYYY-MM-DD
+}
+
+function detectTaskType(title: string): TaskType {
+  const lower = title.toLowerCase();
+  if (lower.includes("exam") || lower.includes("midterm") || lower.includes("final") || lower.includes("oral argument")) return "exam";
+  if (lower.includes("quiz")) return "quiz";
+  if (lower.includes("homework") || lower.includes("assignment") || lower.includes("due")) return "assignment";
+  if (lower.includes("read") || lower.includes("reading")) return "reading";
+  return "other";
+}
+
+function parseDateRange(dateStr: string): string[] {
+  const monthNames: { [key: string]: number } = {
+    Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
+    Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11
+  };
+
+  const match = dateStr.match(/([A-Za-z]+)\s+(\d{1,2})(?:-(\d{1,2}))?,?\s*(\d{4})?/);
+  if (!match) return [];
+  const month = monthNames[match[1].slice(0, 3)] ?? 0;
+  const startDay = parseInt(match[2]);
+  const endDay = match[3] ? parseInt(match[3]) : startDay;
+  const year = match[4] ? parseInt(match[4]) : new Date().getFullYear();
+
+  const dates: string[] = [];
+  for (let day = startDay; day <= endDay; day++) {
+    const d = new Date(year, month, day);
+    dates.push(d.toISOString().split("T")[0]);
+  }
+  return dates;
+}
+
+export function parseSyllabus(text: string): CalendarTask[] {
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  const tasks: CalendarTask[] = [];
+  let currentDate: string | null = null;
+  let buffer: string[] = [];
+  let rangeDates: string[] = [];
+
+  const flushBuffer = () => {
+    if (buffer.length === 0) return;
+    const title = buffer.join(" ");
+    const type = detectTaskType(title);
+    if (rangeDates.length > 0) {
+      for (const date of rangeDates) {
+        tasks.push({
+          id: `${title}-${date}-${tasks.length}`,
+          title,
+          type,
+          date
+        });
+      }
+      rangeDates = [];
+    } else {
+      tasks.push({
+        id: `${title}-${currentDate ?? "no-date"}-${tasks.length}`,
+        title,
+        type,
+        date: currentDate ?? ""
+      });
+    }
+    buffer = [];
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (/NO CLASS/i.test(line)) {
+      flushBuffer();
+      currentDate = null;
+      continue;
+    }
+
+    // Week header like "1 January 17"
+    const weekDateMatch = line.match(/^\d+\s+([A-Za-z]+\s+\d{1,2})/);
+    if (weekDateMatch) {
+      flushBuffer();
+      currentDate = parseDateRange(weekDateMatch[1])[0] ?? null;
+      continue;
+    }
+
+    // Multi-line date block like "Tuesday, February 18"
+    const multiLineDateMatch = line.match(/(Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\s*([A-Za-z]+)\s+(\d{1,2}),?\s*(\d{4})?/);
+    if (multiLineDateMatch) {
+      flushBuffer();
+      currentDate = parseDateRange(`${multiLineDateMatch[2]} ${multiLineDateMatch[3]} ${multiLineDateMatch[4] || ""}`)[0] ?? null;
+      continue;
+    }
+
+    // Detect date ranges like "April 3-4"
+    const rangeMatch = line.match(/([A-Za-z]+\s+\d{1,2}(?:-\d{1,2})?,?\s*(\d{4})?)/);
+    if (rangeMatch && /oral arguments/i.test(lines[i + 1] ?? "")) {
+      flushBuffer();
+      rangeDates = parseDateRange(rangeMatch[1]);
+      continue;
+    }
+
+    // Start of a task: bullet or keywords
+    if (line.startsWith("•") || /^(Read|Writing Assignment Due|ORAL ARGUMENTS)/i.test(line)) {
+      flushBuffer();
+      buffer.push(line.replace(/^•\s*/, ""));
+      continue;
+    }
+
+    // Continuation of multi-line task
+    if (buffer.length > 0) {
+      buffer.push(line);
+    }
+  }
+
+  flushBuffer();
+  return tasks;
+}

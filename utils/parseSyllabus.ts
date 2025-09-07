@@ -5,83 +5,77 @@ export interface CalendarTask {
   title: string;
   type: TaskType;
   date: string; 
+  description?: string;
 }
 
-function detectTaskType(title: string): TaskType {
-  const lower = title.toLowerCase();
-  if (lower.includes("exam") || lower.includes("midterm") || lower.includes("final") || lower.includes("oral argument")) return "exam";
+function detectTaskType(text: string): TaskType {
+  const lower = text.toLowerCase();
+  if (lower.includes("exam") || lower.includes("final") || lower.includes("oral argument")) return "exam";
   if (lower.includes("quiz")) return "quiz";
-  if (lower.includes("homework") || lower.includes("assignment") || lower.includes("due")) return "assignment";
+  if (lower.includes("assignment") || lower.includes("due") || lower.includes("homework")) return "assignment";
   if (lower.includes("read") || lower.includes("reading")) return "reading";
   return "other";
 }
 
-function parseDateRange(dateStr: string): string[] {
-  const monthNames: { [key: string]: number } = {
-    Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
-    Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11
+function parseDateLine(line: string, fallbackYear = 2025): string[] {
+  const monthMap: { [key: string]: number } = {
+    Jan:0, Feb:1, Mar:2, Apr:3, May:4, Jun:5,
+    Jul:6, Aug:7, Sep:8, Oct:9, Nov:10, Dec:11
   };
-
-  const rangeMatch = dateStr.match(/([A-Za-z]+)\.?\s+(\d{1,2})(?:-(\d{1,2}))?,?\s+(\d{4})/);
-  if (!rangeMatch) return [];
-
-  const month = monthNames[rangeMatch[1].slice(0,3)];
-  const startDay = parseInt(rangeMatch[2]);
-  const endDay = rangeMatch[3] ? parseInt(rangeMatch[3]) : startDay;
-  const year = parseInt(rangeMatch[4]);
-
+  const clean = line.replace(/^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s*/i,"").trim();
+  const m = clean.match(/([A-Za-z]+)\.?\s+(\d{1,2})(?:-(\d{1,2}))?,?\s*(\d{4})?/);
+  if (!m) return [];
+  const month = monthMap[m[1].slice(0,3)];
+  const startDay = parseInt(m[2]);
+  const endDay = m[3] ? parseInt(m[3]) : startDay;
+  const year = m[4] ? parseInt(m[4]) : fallbackYear;
   const dates: string[] = [];
-  for (let day = startDay; day <= endDay; day++) {
-    const d = new Date(year, month, day);
-    dates.push(d.toISOString().split("T")[0]);
+  for(let d=startDay; d<=endDay; d++){
+    const dateObj = new Date(year, month, d);
+    if (!isNaN(dateObj.getTime())) {
+      dates.push(dateObj.toISOString().split("T")[0]);
+    }
   }
   return dates;
 }
 
-export function parseSyllabus(text: string): CalendarTask[] {
-  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+export function parseSyllabus(text: string, fallbackYear = 2025): CalendarTask[] {
+  const lines = text.split("\n").map(l=>l.trim()).filter(Boolean);
   const tasks: CalendarTask[] = [];
   let currentDates: string[] = [];
   let buffer: string[] = [];
 
   const flushBuffer = () => {
-    if (buffer.length === 0) return;
-    const title = buffer.join(" ");
+    if (!buffer.length) return;
+    const title = buffer.join(" ").trim();
     const type = detectTaskType(title);
     if (currentDates.length === 0) {
-      tasks.push({ id: `${title}-no-date-${tasks.length}`, title, type, date: "" });
+      tasks.push({ id: `${title}-no-date-${tasks.length}`, title, type, date:"", description:title });
     } else {
-      for (const date of currentDates) {
-        tasks.push({ id: `${title}-${date}-${tasks.length}`, title, type, date });
+      for(const date of currentDates){
+        tasks.push({ id: `${title}-${date}-${tasks.length}`, title, type, date, description:title });
       }
     }
     buffer = [];
   };
 
-  for (const line of lines) {
-    if (/NO CLASS/i.test(line)) {
+  const dateRegex = /\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)?,?\s*[A-Za-z]+\.?\s+\d{1,2}(?:-\d{1,2})?,?\s*(\d{4})?\b/i;
+
+  for(const line of lines){
+    if (/no class/i.test(line) || /^[IVX]+\./.test(line) || /^INTRODUCTION/i.test(line)) {
       flushBuffer();
-      currentDates = [];
+      currentDates=[];
       continue;
     }
 
-    const dateMatch = line.match(/([A-Za-z]+\.?\s+\d{1,2}(?:-\d{1,2})?,?\s+\d{4})/);
-    if (dateMatch) {
+    const match = line.match(dateRegex);
+    if(match){
       flushBuffer();
-      currentDates = parseDateRange(dateMatch[1]);
+      currentDates = parseDateLine(match[0], fallbackYear);
       continue;
     }
 
-    if (line.startsWith("§") || line.startsWith("•") || /^(Read|Writing Assignment Due|ORAL ARGUMENTS)/i.test(line)) {
-      flushBuffer();
-      buffer.push(line.replace(/^•|§\s*/, "").trim());
-      continue;
-    }
-
-    if (buffer.length > 0) 
-      {
-        buffer.push(line);
-      }
+    buffer.push(line.replace(/^•|§\s*/,"").trim());
   }
 
   flushBuffer();
